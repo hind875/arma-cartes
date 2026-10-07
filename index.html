@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARMA — Carte du circuit</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+ html,body{margin:0;height:100%;font-family:system-ui,Segoe UI,Arial,sans-serif;background:#111}
+ #map{position:absolute;inset:0}
+ .panel{position:absolute;z-index:1000;top:12px;left:56px;max-width:min(520px,calc(100% - 80px));background:#fff;
+   border-radius:10px;padding:12px 14px;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+ .panel h1{font-size:16px;margin:0 0 4px} .panel p{font-size:13px;color:#333;margin:4px 0}
+ .leg{position:absolute;z-index:1000;bottom:22px;left:12px;background:#fff;border-radius:8px;padding:8px 10px;
+   font-size:12.5px;box-shadow:0 2px 8px rgba(0,0,0,.25);line-height:1.8}
+ .sw{display:inline-block;width:22px;vertical-align:middle;margin-right:6px;border-radius:3px}
+ .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin:0 5px 0 0;vertical-align:middle;border:2px solid #fff;box-shadow:0 0 0 1px #555}
+ #err{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:#fff;font-size:16px;padding:20px;text-align:center}
+</style></head><body>
+<div id="map"></div><div id="err"></div>
+<div class="panel" id="panel" style="display:none"><h1 id="t"></h1><p id="s"></p><p id="r" style="color:#666;font-size:12px"></p></div>
+<div class="leg" id="leg" style="display:none">
+ <div id="lc"><span class="sw" style="background:#16a34a;height:9px"></span><b>Vert : circuit de base</b> (ce que le camion devait faire)</div>
+ <div><span class="sw" style="background:#2563eb;height:4px"></span><b>Bleu : ce que le camion a fait</b></div>
+ <div><span class="sw" style="background:#9ca3af;height:3px"></span>Gris : trajet avant / après le shift</div>
+ <div><span class="dot" style="background:#16a34a"></span>Départ <span class="dot" style="background:#1d4ed8;margin-left:8px"></span>Retour
+  <span class="dot" style="background:#dc2626;margin-left:8px"></span>Arrêt long</div>
+</div>
+<script>
+// Les données de la carte sont dans le lien, après « # » (compressées). Elles ne sont jamais
+// envoyées au serveur qui héberge cette page : tout est lu dans le navigateur.
+async function lire(){
+  const h = location.hash.slice(1);
+  if(!h) throw new Error("Aucune carte dans le lien.");
+  const b64 = h.replace(/-/g,'+').replace(/_/g,'/') + '==='.slice((h.length+3)%4);
+  const bin = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
+  const flux = new Blob([bin]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return JSON.parse(await new Response(flux).text());
+}
+const dec = (l,f)=>{let la=0,lo=0;return l.map(([a,b])=>{la+=a;lo+=b;return [la/f,lo/f];});};
+lire().then(D=>{
+  const f = D.f || 1e5;
+  document.title = D.t || document.title;
+  document.getElementById('t').textContent = D.t||'';
+  document.getElementById('s').textContent = D.s||'';
+  document.getElementById('r').textContent = D.r||'';
+  document.getElementById('panel').style.display='block';
+  document.getElementById('leg').style.display='block';
+  const map = L.map('map');
+  const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'© Esri'}).addTo(map);
+  const noms = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{maxZoom:19}).addTo(map);
+  const plan = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'© Esri'});
+  L.control.layers({'Satellite':sat,'Plan':plan},{'Noms des quartiers':noms}).addTo(map);
+  const B=[];
+  (D.p||[]).forEach(p=>{const poly=dec(p.l,f);L.polygon(poly,{color:'#1d4ed8',weight:2,fillOpacity:.35}).addTo(map).bindTooltip(p.n,{permanent:true,direction:'top'});});
+  if(!(D.c||[]).length) document.getElementById('lc').style.display='none';
+  (D.c||[]).forEach(l=>{const ll=dec(l,f);L.polyline(ll,{color:'#16a34a',weight:10,opacity:.8,lineCap:'round'}).addTo(map).bindTooltip('Circuit de base',{sticky:true});ll.forEach(x=>B.push(x));});
+  (D.g||[]).forEach(l=>{L.polyline(dec(l,f),{color:'#9ca3af',weight:2,opacity:.8}).addTo(map);});
+  (D.b||[]).forEach(l=>{const ll=dec(l,f);L.polyline(ll,{color:'#2563eb',weight:3.5,opacity:.95}).addTo(map).bindTooltip('Trace du camion',{sticky:true});ll.forEach(x=>B.push(x));});
+  const C={d:'#16a34a',r:'#1d4ed8',a:'#dc2626',c:'#7c3aed'};
+  (D.m||[]).forEach(m=>{L.circleMarker([m[1]/f,m[2]/f],{radius:8,color:'#fff',weight:2,fillColor:C[m[0]]||'#333',fillOpacity:1}).addTo(map).bindTooltip(m[3]);});
+  if(B.length) map.fitBounds(B,{padding:[30,30]}); else map.setView([18.09,-15.97],12);
+}).catch(e=>{const d=document.getElementById('err');d.style.display='flex';d.textContent='Carte illisible : '+e.message;});
+</script></body></html>
