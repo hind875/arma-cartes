@@ -28,13 +28,28 @@
 <script>
 // Les données de la carte sont dans le lien, après « # » (compressées). Elles ne sont jamais
 // envoyées au serveur qui héberge cette page : tout est lu dans le navigateur.
-async function lire(){
-  const h = location.hash.slice(1);
-  if(!h) throw new Error("Aucune carte dans le lien.");
-  const b64 = h.replace(/-/g,'+').replace(/_/g,'/') + '==='.slice((h.length+3)%4);
-  const bin = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
-  const flux = new Blob([bin]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+const b64bytes = h => Uint8Array.from(atob(h.replace(/-/g,'+').replace(/_/g,'/') + '==='.slice((h.length+3)%4)), c=>c.charCodeAt(0));
+async function inflate(bytes){
+  const flux = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
   return JSON.parse(await new Response(flux).text());
+}
+async function lire(){
+  let h = location.hash.slice(1);
+  try{ h = decodeURIComponent(h); }catch(e){}
+  h = h.replace(/\s+/g,'');
+  if(!h) throw new Error("Aucune carte dans le lien.");
+  if(h.includes('f=') && h.includes('k=')){
+    // Lien court : f = fichier du rapport, k = clé de déchiffrement, c = n° de la carte
+    const P = new URLSearchParams(h);
+    const rep = await fetch('donnees/' + P.get('f') + '.bin', {cache:'no-store'});
+    if(!rep.ok) throw new Error("Cartes pas encore disponibles (réessayez dans 2 minutes).");
+    const brut = new Uint8Array(await rep.arrayBuffer());
+    const cle = await crypto.subtle.importKey('raw', b64bytes(P.get('k')), 'AES-GCM', false, ['decrypt']);
+    const clair = await crypto.subtle.decrypt({name:'AES-GCM', iv: brut.slice(0,12)}, cle, brut.slice(12));
+    const toutes = await inflate(new Uint8Array(clair));
+    return toutes[parseInt(P.get('c'),10)];
+  }
+  return inflate(b64bytes(h));      // ancien format : carte entière dans le lien
 }
 const dec = (l,f)=>{let la=0,lo=0;return l.map(([a,b])=>{la+=a;lo+=b;return [la/f,lo/f];});};
 lire().then(D=>{
