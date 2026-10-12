@@ -41,11 +41,24 @@ async function lire(){
   if(h.includes('f=') && h.includes('k=')){
     // Lien court : f = fichier du rapport, k = clé de déchiffrement, c = n° de la carte
     const P = new URLSearchParams(h);
-    const rep = await fetch('donnees/' + P.get('f') + '.bin', {cache:'no-store'});
-    if(!rep.ok) throw new Error("Cartes pas encore disponibles (réessayez dans 2 minutes).");
+    const nom = 'donnees/' + P.get('f') + '.bin';
+    // 1) la page elle-même ; 2) secours : copie brute GitHub (disponible dès l'envoi du rapport)
+    const proprio = location.hostname.split('.')[0];
+    const depot = location.pathname.split('/').filter(Boolean)[0] || '';
+    const sources = [nom, `https://raw.githubusercontent.com/${proprio}/${depot}/main/${nom}`];
+    let rep = null;
+    for(const u of sources){
+      try{ const x = await fetch(u, {cache:'no-store'}); if(x.ok){ rep = x; break; } }catch(e){}
+    }
+    if(!rep) throw new Error("Fichier des cartes introuvable (" + P.get('f') + "). Réessayez dans 2 minutes.");
     const brut = new Uint8Array(await rep.arrayBuffer());
-    const cle = await crypto.subtle.importKey('raw', b64bytes(P.get('k')), 'AES-GCM', false, ['decrypt']);
-    const clair = await crypto.subtle.decrypt({name:'AES-GCM', iv: brut.slice(0,12)}, cle, brut.slice(12));
+    let clair;
+    try{
+      const cle = await crypto.subtle.importKey('raw', b64bytes(P.get('k')), 'AES-GCM', false, ['decrypt']);
+      clair = await crypto.subtle.decrypt({name:'AES-GCM', iv: brut.slice(0,12)}, cle, brut.slice(12));
+    }catch(e){
+      throw new Error("Ce lien vient d'un ancien envoi remplacé depuis par un nouvel envoi. Ouvrez le lien du dernier mail.");
+    }
     const toutes = await inflate(new Uint8Array(clair));
     return toutes[parseInt(P.get('c'),10)];
   }
